@@ -2,6 +2,8 @@
  *
  * Piece-related algorithms and functions.
  *
+ * All shim-related dimensions are base-relative (scale: 1 = 1/4").
+ *
  */
 
 /** Unit conversions. */
@@ -10,10 +12,10 @@ var unitPt = {mm: 72/25.4, cm: 72/2.54, in: 72, pt: 1}; // Conversion from point
 /** Maximum seed value. */
 var MAX_SEED = 999999;
 
-/** Ratio between shim side and base. */
+/** Ratio between shim side (16") and base (1/4"). */
 var side = 64;
 
-/** Ratio between shim tip and base. */
+/** Ratio between shim tip (1/16") and base (1/4"). */
 var tip = 0.25;
 
 /** Distance between tip and vanishing point for trapezoidal shim, used to
@@ -30,11 +32,22 @@ var tipSide = (tip*side) / (1-tip);
 var shimAngle3 = 2*Math.asin(0.5/side);             /* triangular. */
 var shimAngle4 = 2*Math.asin(0.5/(side+tipSide));   /* trapezoidal. */
 
-/** Size of negative space in base units. */
-var negativeSpace = 6;
+/** Head-shoulder distance = 5". */
+var headShoulder = 20;
+
+/** Shoulder-hip distance = 13 3/8". */
+var shoulderHip = 53.5;
+
+/** Hip-calve distance = 14 1/16". */
+var hipCalve = 56.25;
 
 /** Ten primes used to seed the linear congruential generator. */
 var primes = [53, 59, 61, 67, 71, 73, 79, 83, 89, 97];
+
+/** Shuffle factor, improves distribution of LCG on lower digits. Here we used a 
+    large prime but any odd number should work given the nature of 2's
+    complement arithmetic. */
+var shuffle = 57885161;
 
 /**
  * Generate increment value for linear congruential generator.
@@ -58,7 +71,7 @@ function lcg_increment(seed) {
 /**
  * Linear congruential generator x_n+1 = (a.x_n + c) mod m.
  *
- * Used to generate a non-repeating sequence of m=2x^y integers starting at 0.
+ * Used to generate a non-repeating sequence of m=x^y integers starting at 0.
  *
  *  @param v    Previous value.
  *  @param c    Increment.
@@ -69,16 +82,16 @@ function lcg_increment(seed) {
  */
 function lcg(v, c, x, y) {
     // Number of desired permutations.
-    var m = 2*Math.pow(x, y);
+    var m = Math.pow(x, y);
     
     // LCG will have a full period if and only if:
     // 1. c and m are relatively prime
     // 2. a-1 is divisible by all prime factors of m
     // 3. a-1 is a multiple of 4 if m is a multiple of 4
     //
-    // As m=2x^Y, prime factors of m are 2 and x, if x is prime, or x's prime
-    // factors otherwise.
-    // m is multiple of 4 if and only if x is multiple of 2.
+    // As m=x^y, prime factors of m are x, if x is prime, or x's prime factors 
+    // otherwise.
+    // m is multiple of 4 if and only if x is multiple of 2 (assuming y >= 2).
     // #1 is met if x is less than the lowest prime factor used in 
     // lcg_increment().
     
@@ -89,39 +102,30 @@ function lcg(v, c, x, y) {
 /**
  * Generate a random shim permutation.
  *
- *  @param index    Index of piece to generate.
- *  @param c        LCG increment value.
- *  @param x        Number of shims per shim unit.
- *  @param y        Number of shim units/slots per piece.
+ *  @param index        Index of piece to generate.
+ *  @param c            LCG increment value.
+ *  @param x            Number of shims per shim unit.
+ *  @param symmetric    Symmetry flag.
  *
  *  @return serial number.
  */
-function generatePermutation(index, c, x, y) {
-    var max = Math.pow(x, y);
+function generatePermutation(index, c, x, symmetric) {
+    var y = (symmetric ? 4 : 7);
 
     // Generate pseudorandom value in [0, 2*max) by calling LCG with sequence
     // number using the previously computed increment value.
-    var r = lcg(index, c, x, y);
-    
-    // Sign.
-    var sign;
-    if (r < max) {
-        // Negative / downward.
-        sign = "-";
-    } else {
-        // Positive / upward.
-        sign = "+";
-        r -= max;
-    }
+    var r = lcg(index * shuffle, c, x, y);
     
     // Digits.
     var digits = "";
     for (var i = 0; i < y; i++) {
-        digits += String.fromCharCode(65 + (r % x));
+        var d = String.fromCharCode(65 + (r % x));
+        digits += d;
+        if (symmetric && i > 0) digits += d;
         r = Math.floor(r/x);
     }
-    
-    return sign + digits;
+
+    return digits;
 }
 
 /**
@@ -135,11 +139,11 @@ function generatePermutation(index, c, x, y) {
  */
 function testUnicity(x, y, seed) {
     var c = lcg_increment(seed);
-    var max = 2*Math.pow(x,y);
+    var max = Math.pow(x,y);
     var values = Array();
     var dup = Array();
     for (var i = 0; i < max; i++) {
-        var key = lcg(i, c, x, y);
+        var key = lcg(i * shuffle, c, x, y);
         if (typeof(values[key]) === 'undefined') {
             values[key] = [i];
         } else {
@@ -167,7 +171,7 @@ function rotate(c, p, angle) {
 }
 
 /**
- * Project line passing trought *c* and *p* on horizontal line at *y*.
+ * Project line passing throught *c* and *p* on horizontal line at *y*.
  *
  *  @param c, p     Points on line to project.
  *  @param y        Y-coordinate of line to project onto.
@@ -182,49 +186,98 @@ function project(c, p, y) {
 }
 
 /**
+ * Interpolate between *p1* and *p2* at relative position *d*.
+ *
+ *  @param p1   First point (d=0).
+ *  @param p2   Second point (d=1).
+ *  @param d    Position.
+ */
+function interpolate(p1, p2, d) {
+    return {
+        x: p1.x + (p2.x-p1.x)*d,
+        y: p1.y + (p2.y-p1.y)*d
+    };
+}
+
+/**
  * Compute a piece from its serial number.
  *
  *  @param sn           The piece serial number.
- *  @param options      Piece options: cropped, trapezoidal.
+ *  @param options      Piece options: trapezoidal.
  *
  *  @return The piece object.
  */
 function computePiece(sn, options) {
-    if (sn.length < 2 || (sn[0] != '+' && sn[0] != '-')) return;
+    if (sn.length != 4 && sn.length != 7) return;
 
     //
     // 1. Iterate over slots and build shim coordinates.
     //
     
     var slots = Array(); // Array of slots.
-    var nbSlots = sn.length-1;
     var angle = options.trapezoidal ? shimAngle4 : shimAngle3;
-    var angleStep = 0; // Rotation steps, each of *angle* radians.
-    var upward = (sn[0]=='+') ? 1 : -1; // Whether first shim is pointing upward.
-    for (var iSlot = 0; iSlot < nbSlots; iSlot++) {
+
+    // For triangular pieces we need to adjust the shoulder angles so that the 
+    // tips don't cross the head's axe of symmetry, else they would overlap.
+    // Here we use the law of sins: for a triangle with sides (a,b,c) and 
+    // facing angles (A,B,C), a/sinA = b/sinB = c/sinB.
+    // A = angle of left head side.
+    // a = *side*
+    // b = *headShoulder*
+    // B = angle to compute = asin(b/a*sinA)
+    var headAngleStep = (sn.charCodeAt(0)-64)/2;    // A
+    var sideAngleStep = Math.asin(
+          headShoulder / side                       // b/a
+        * Math.sin(headAngleStep * angle)           // asin(A)
+    ) / angle;
+    
+    for (var iSlot = 0; iSlot < 7; iSlot++) {
         // Left tip corner of first shim.
-        var p0_tip = {x: 0, y: 0};
+        var p0_tip = {x: 0, y: side};
             
         // Left base corner of first shim when angle = 0 (vertical).
-        var p1_base = {x: 0, y: side*upward};
+        var p1_base = {x: 0, y: 0};
         
         // Rotation center.
         var center;
         if (options.trapezoidal) {
-            center = {x: 0, y: -tipSide*upward};
+            center = {x: 0, y: side+tipSide};
         } else {
             center = p0_tip;
         }
 
         var shims = Array();
-        slots[iSlot] = {shims: shims, angleStep: angleStep, upward: upward};
+        slots[iSlot] = {shims: shims};
         
         // Iterate over shims.
-        var nbShims = sn.charCodeAt(iSlot+1)-64; /* A=65 */
+        var nbShims = sn.charCodeAt(iSlot)-64; /* A=65 */
+        var angleStep; // Rotation steps, each of *angle* radians.
+        switch (iSlot) {
+            case 1:
+                // Left shoulder's right side is aligned on head's left side.
+                angleStep = -(sn.charCodeAt(0)-64)/2 - nbShims;
+                if (!options.trapezoidal) {
+                    angleStep += sideAngleStep;
+                }
+                break;
+                
+            case 2:
+                // Right shoulder's left side is aligned on head's right side.
+                angleStep = (sn.charCodeAt(0)-64)/2;
+                if (!options.trapezoidal) {
+                    angleStep -= sideAngleStep;
+                }
+                break;
+                
+            default:
+                // Other limbs are hanging symmetrically.
+                angleStep= -nbShims/2;
+        }               
+            
         for (var iShim = 0; iShim < nbShims; iShim++) {
             var p0 = rotate(center, p0_tip, angleStep * angle);
             var p1 = rotate(center, p1_base, angleStep * angle);
-            angleStep -= upward;
+            angleStep++;
             var p2 = rotate(center, p1_base, angleStep * angle);
             if (options.trapezoidal) {
                 var p3 = rotate(center, p0_tip, angleStep * angle);
@@ -233,137 +286,95 @@ function computePiece(sn, options) {
                 shims[iShim] = [p0, p1, p2];
             }
         }
-        
-        // Flip orientation of next slot.
-        upward = -upward;
     }
     
     //
-    // 2. Compute piece height & shift piece vertically.
+    // 2. Shift slots to junction points.
     //
     
-    var height;
-    if (options.cropped) {
-        // Height = min inner height of all pieces.
-        height = Number.POSITIVE_INFINITY;
-        for (var iSlot = 0; iSlot < slots.length; iSlot++) {
-            var slot = slots[iSlot];
-            var maxTip = Number.NEGATIVE_INFINITY, minBase = Number.POSITIVE_INFINITY;
-            for (var iShim = 0; iShim < slot.shims.length; iShim++) {
-                var shim = slot.shims[iShim];
-                maxTip = Math.max(maxTip, shim[0].y * slot.upward);
-                if (options.trapezoidal) maxTip = Math.max(maxTip, shim[3].y * slot.upward);
-                minBase = Math.min(minBase, shim[1].y * slot.upward, shim[2].y * slot.upward);
-            }
-            height = Math.min(height, Math.abs(maxTip-minBase));
-
-            // Shift piece to align innermost tip with zero.
-            for (var iShim = 0; iShim < slot.shims.length; iShim++) {
-                var shim = slot.shims[iShim];
-                for (var i = 0; i < shim.length; i++) {
-                    shim[i].y -= maxTip * slot.upward;
-                }
-            }
-        }
-    } else {
-        // Height = max outer height of all pieces.
-        height = 0;
-        for (var iSlot = 0; iSlot < slots.length; iSlot++) {
-            var slot = slots[iSlot];
-            var minY = Number.POSITIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
-            for (var iShim = 0; iShim < slot.shims.length; iShim++) {
-                var shim = slot.shims[iShim];
-                for (var i = 0; i < shim.length; i++) {
-                    minY = Math.min(minY, shim[i].y);
-                    maxY = Math.max(maxY, shim[i].y);
-                }
-            }
-            height = Math.max(height, maxY-minY);
-            
-            // Shift piece to align outermost tip with zero.
-            for (var iShim = 0; iShim < slot.shims.length; iShim++) {
-                var shim = slot.shims[iShim];
-                for (var i = 0; i < shim.length; i++) {
-                    shim[i].y -= (slot.upward > 0 ? minY : maxY);
-                }
-            }
-        }
-    }
-
-    //
-    // 3. Align shim tips on bottom side.
-    //
-
-    for (var iSlot = 0; iSlot < slots.length; iSlot++) {
+    for (var iSlot = 1; iSlot < 7; iSlot++) {
         var slot = slots[iSlot];
-        for (var iShim = 0; iShim < slot.shims.length; iShim++) {
-            var shim = slot.shims[iShim];
-            if (slot.upward > 0) continue;
-            for (i = 0; i < shim.length; i++) {
-                shim[i].y += height;
-            }
-        }
-    }
+        var prevSlot, prevShim; // Upper shim unit/shim.
+        var shiftDistance;      // Distance to interpolate on upper shim unit.
+        var junction1;          // Junction point on upper shim unit.
+        var junction2;          // Junction point on shim unit to shift.
+        var shift;              // Shift vector.
         
-    //
-    // 4. Crop shims.
-    //
-    
-    if (options.cropped) {
-        // Crop slots by piece height.
-        for (var iSlot = 0; iSlot < slots.length; iSlot++) {
-            var slot = slots[iSlot];
-            for (var iShim = 0; iShim < slot.shims.length; iShim++) {
-                var shim = slot.shims[iShim];
-                var y1 = (slot.upward > 0 ? 0 : height);
-                var y2 = (slot.upward > 0 ? height : 0);
-                var p0 = project(shim[0], shim[1], y1);
-                var p1 = project(shim[0], shim[1], y2);
-                if (options.trapezoidal) {
-                    var p2 = project(shim[3], shim[2], y2);
-                    var p3 = project(shim[3], shim[2], y1);
-                    slot.shims[iShim] = [p0, p1, p2, p3];
-                } else {
-                    var p2 = project(shim[0], shim[2], y2);
-                    slot.shims[iShim] = [p0, p1, p2];
-                }
-            }
+        // 2.1. Get previous slot and distance.
+        switch (iSlot) {
+            case 1:     // Left shoulder.
+            case 2:     // Right shoulder.
+                prevSlot = slots[0]; // Head.
+                shiftDistance = headShoulder/side;
+                break;
+                
+            case 3:     // Left hip.
+            case 4:     // Right hip.
+                prevSlot = slots[iSlot-2]; // Left/right shoulder.
+                shiftDistance = shoulderHip/side;
+                break;
+                
+            case 5:     // Left calve.
+            case 6:     // Right calve.
+                prevSlot = slots[iSlot-2]; // Left/right hip.
+                shiftDistance = hipCalve/side;
+                break;
         }
-    }
-    
-    //
-    // 5. Build negative spaces according to alignment rules.
-    //
-    //  - Project previous slot's right side on next slot's tip side
-    //  - Project curent slot's left side on tip side
-    //  - Shift by distance + negative space.
-    //
-
-    for (var iSlot = 1; iSlot < slots.length; iSlot++) {
-        var slot = slots[iSlot];
-        var y = slot.upward > 0 ? 0 : height;
-        var prevSlot = slots[iSlot-1];
-        var prevShim = prevSlot.shims[prevSlot.shims.length-1];
-        var prevP = project(
-            options.trapezoidal ? prevShim[3] : prevShim[0],
-            prevShim[2],
-            y
-        );
-        var p = project(slot.shims[0][0], slot.shims[0][1], y);
-        var shift = prevP.x - p.x + negativeSpace;
+        
+        // - 2.2. Compute junction points.
+        switch (iSlot) {
+            case 1:     // Left shoulder.
+            case 3:     // Left hip.
+            case 5:     // Left calve.
+                // Junction point on left side of upper shim unit.
+                prevShim = prevSlot.shims[0];
+                junction1 = interpolate(
+                    prevShim[1], 
+                    prevShim[0], 
+                    shiftDistance
+                );
+                
+                // Junction point = right base corner.
+                junction2 = slot.shims[slot.shims.length-1][2];
+                break;
+                
+            case 2:     // Right shoulder.
+            case 4:     // Right hip.
+            case 6:     // Right calve.
+                // Junction point on right side of upper shim unit.
+                prevShim = prevSlot.shims[prevSlot.shims.length-1];
+                junction1 = interpolate(
+                    prevShim[2], 
+                    prevShim[3%prevShim.length], 
+                    shiftDistance
+                );
+                
+                // Junction point = left base corner.
+                junction2 = slot.shims[0][1];
+                break;
+        }
+        
+        // 2.3. Connect junction points by shifting slots.
+        shift = {
+            x: junction1.x - junction2.x,
+            y: junction1.y - junction2.y,
+        };
+        
         for (var iShim = 0; iShim < slot.shims.length; iShim++) {
             var shim = slot.shims[iShim];
             for (i = 0; i < shim.length; i++) {
-                shim[i].x += shift;
+                shim[i].x += shift.x;
+                shim[i].y += shift.y;
             }
         }
     }
     
     //
-    // 6. Compute bounding box.
+    // 3. Compute bounding box.
     //
     
-    var x=0, y=0, x2=0, y2=0;
+    var x  = Number.POSITIVE_INFINITY, y  = Number.POSITIVE_INFINITY, 
+        x2 = Number.NEGATIVE_INFINITY, y2 = Number.NEGATIVE_INFINITY;
     for (var iSlot = 0; iSlot < slots.length; iSlot++) {
         var slot = slots[iSlot];
         for (var iShim = 0; iShim < slot.shims.length; iShim++) {
@@ -376,6 +387,27 @@ function computePiece(sn, options) {
             }
         }
     }
+    
+    //
+    // 4. Ensure that all coords are positive. Other code portions depend on it
+    //    (e.g. HTML SVG objects & PDF layout).
+    //
+    
+    for (var iSlot = 0; iSlot < slots.length; iSlot++) {
+        var slot = slots[iSlot];
+        for (var iShim = 0; iShim < slot.shims.length; iShim++) {
+            var shim = slot.shims[iShim];
+            for (i = 0; i < shim.length; i++) {
+                shim[i].x -= x;
+            }
+        }
+    }
+    x2 -= x;
+    x = 0;
+    
+    //
+    // Done!
+    //
     
     return {sn: sn, slots: slots, bbox: {x: x, y: y, x2: x2, y2: y2}};
 }
@@ -453,7 +485,7 @@ function drawPDF(piece, pdf, scale, offX, offY) {
  * Generate a multi-page PDF from a set of pieces.
  *
  *
- *  @param pieceOptions     Piece options: cropped, trapezoidal.
+ *  @param pieceOptions     Piece options: trapezoidal.
  *  @param printOptions     Print options:
  *                          - orient    Orientation ('portrait', 'landscape').
  *                          - format    Page format ('a3', 'a4','a5' ,'letter' ,'legal').
@@ -530,7 +562,7 @@ function piecesToPDF(pieceOptions, printOptions, limits, onprogress, onfinish) {
     var col = 0, row = 0, nb = 0, page = 1, firstPage = 1, doc = 1;
     
     // Function for header/footer output.
-    var compo = x+"-"+y+"-"+seed;
+    var compo = x+"-"+(symmetric?"S":"A")+"-"+seed;
     var compoWidth = pdf.getStringUnitWidth(compo) * fontSizeUnit;
     var headerFooter = function() {
         // DEBUG
@@ -663,8 +695,8 @@ function piecesToPDF(pieceOptions, printOptions, limits, onprogress, onfinish) {
             }
         }
         
-        // Compute piece/
-        var sn = generatePermutation(i, c, x, y)
+        // Compute piece.
+        var sn = generatePermutation(i, c, x, symmetric);
         var piece = computePiece(sn, pieceOptions);
 
         var labelWidth = pdf.getStringUnitWidth(sn) * fontSizeUnit;
@@ -765,7 +797,7 @@ function piecesToPDF(pieceOptions, printOptions, limits, onprogress, onfinish) {
 /**
  * Generate a Zip archive of SVG files from a set of pieces.
  *
- *  @param pieceOptions     Piece options: cropped, trapezoidal.
+ *  @param pieceOptions     Piece options: trapezoidal.
  *  @param limits           Output limits:
  *                          - maxPieces        Maximum overall number of pieces to export.
  *                          - maxPiecesPerZip  Maximum number of pieces per Zip file.
@@ -783,6 +815,7 @@ function piecesToZip(pieceOptions, limits, onprogress, onfinish) {
     var nbFiles = Math.ceil(nbSvg/limits.maxPiecesPerZip);
     
     // Output each piece as SVG file.
+    var compo = x+"-"+(symmetric?"S":"A")+"-"+seed;
     var svgTmp = $("#tmpSvg svg")[0];
     var nb = 0, file = 1;
     var generateSvg = function(i) {
@@ -793,16 +826,14 @@ function piecesToZip(pieceOptions, limits, onprogress, onfinish) {
         }
         
         // Generate SVG from piece.
-        var sn = generatePermutation(i, c, x, y)
+        var sn = generatePermutation(i, c, x, symmetric);
         var piece = computePiece(sn, pieceOptions);
         var svg = drawSVG(piece, svgTmp);
         svg.attr('viewBox', 
-            piece.bbox.x 
+                    piece.bbox.x 
             + " " + piece.bbox.y 
-            + " " 
-            + (piece.bbox.x2-piece.bbox.x) 
-            + " " 
-            + (piece.bbox.y2-piece.bbox.y)
+            + " " + (piece.bbox.x2-piece.bbox.x) 
+            + " " + (piece.bbox.y2-piece.bbox.y)
         );
         svg.attr({fill: 'none', stroke: 'black', strokeWidth: 0.1});
         
@@ -811,7 +842,7 @@ function piecesToZip(pieceOptions, limits, onprogress, onfinish) {
         nb++;
     }
     var save = function() {
-        saveAs(zip.generate({type: 'blob', compression: 'DEFLATE'}), x+"-"+y+"-"+seed+((nbFiles > 1) ? "."+file : "")+".zip");
+        saveAs(zip.generate({type: 'blob', compression: 'DEFLATE'}), compo+((nbFiles > 1) ? "."+file : "")+".zip");
         onprogress(nb, nbSvg, undefined, undefined, file, nbFiles);
         file++;
     }
@@ -863,7 +894,7 @@ function piecesToZip(pieceOptions, limits, onprogress, onfinish) {
  */
 
 /** Handles. */
-var x, y;
+var x, y, symmetric;
 
 /** Maximum theoretical piece width/height. */
 var maxWidth, maxHeight;
@@ -920,16 +951,17 @@ function validateNumber() {
  */ 
 function validatePermutationSize() {
     var x = parseInt($("#x").val());
-    var y = parseInt($("#y").val());
-    var nbPieces = 2*Math.pow(x,y);
+    var symmetric = $("#symmetric").prop('checked');
+    var y = (symmetric?4:7);
+    var nbPieces = Math.pow(x,y);
     if (nbPieces > Number.MAX_SAFE_INTEGER) {
         // Permutation too large.
         $("#generate").removeClass("btn-default").addClass("btn-danger").prop('disabled', true);
-        $("#x, #y").parent().addClass("has-error bg-danger");
+        $("#x, #symmetric").parent().addClass("has-error bg-danger");
         $("#message").addClass("panel-body").html("<div class='alert alert-danger'><span class='glyphicon glyphicon-warning-sign'></span> Permutation size too large!</div>");
     } else {
         $("#generate").removeClass("btn-danger").addClass("btn-primary").prop('disabled', false);
-        $("#x, #y").parent().removeClass("has-error bg-danger");
+        $("#x, #symmetric").parent().removeClass("has-error bg-danger");
         $("#message").removeClass("panel-body").empty();
     }
 }
@@ -943,18 +975,19 @@ function generatePieces() {
 
     // Get algorithm handles.
     x = parseInt($("#x").val());
-    y = parseInt($("#y").val());
+    symmetric = $("#symmetric").prop('checked');
+    y = (symmetric?4:7);
 
     // Number of pieces to generate.
     nbPieces = parseInt($("#nbPieces").val());
     if ($("#max").prop('checked')) {
         // Use max number of pieces.
-        nbPieces = 2*Math.pow(x,y);
+        nbPieces = Math.pow(x,y);
     }
     
     // Maximum theoretical piece width/height.
-    maxWidth = Math.ceil(y/2)*x + (negativeSpace+tip)*(y-1);
-    maxHeight = side+tip;
+    maxWidth = x*7;//FIXME better formula?
+    maxHeight = headShoulder+shoulderHip+hipCalve+side;
 
     // Get/generate seed.
     if ($("#random").prop('checked')) {
@@ -1097,7 +1130,7 @@ function displayPieces(page) {
         piece += "<svg xmlns='http://www.w3.org/2000/svg' version='1.1'></svg><br/>";
         piece += "</label>";
         piece += "<div class='input-group input-group-sm'>";
-        piece += "<input type='text' class='form-control sn' readonly placeholder='Piece S/N' value='" + generatePermutation(i, c, x, y) + "' size='" + y + "'/>";
+        piece += "<input type='text' class='form-control sn' readonly placeholder='Piece S/N' value='" + generatePermutation(i, c, x, symmetric) + "' size='7'/>";
         piece += "<span class='input-group-btn'><button type='button' class='btn btn-default' onclick='downloadSVG($(this).parent().parent().find(\".sn\").val().trim())'><span class='glyphicon glyphicon-download'></span> SVG</button></span>"
         piece += "</div>";
         piece += "</div>";
@@ -1112,7 +1145,7 @@ function displayPieces(page) {
 }
 
 /**
- * Update existing piece when some parameter changes (e.g. cropping).
+ * Update existing piece when some parameter changes.
  */
 function updatePieces() {
     $("#pieces .piece").each(function(index, element) {
@@ -1130,7 +1163,6 @@ function updatePiece(element) {
     
     // Generate piece.
     var piece = computePiece(sn, {
-        cropped: $("#cropped").prop('checked'), 
         trapezoidal:$("#trapezoidal").prop('checked')
     });
     
@@ -1139,10 +1171,10 @@ function updatePiece(element) {
     
     // Adjust viewbox so that all pieces are centered and use the same scale.
     svg.attr('viewBox', 
-        ((piece.bbox.x2-piece.bbox.x)-maxWidth)/2
-        + " "
-        + ((piece.bbox.y2-piece.bbox.y)-maxHeight)/2
-        + " " + maxWidth + " " + maxHeight);
+                ((piece.bbox.x2-piece.bbox.x)-maxWidth)/2
+        + " " + ((piece.bbox.y2-piece.bbox.y)-maxHeight)/2
+        + " " + maxWidth 
+        + " " + maxHeight);
 }
 
 /**
@@ -1159,7 +1191,6 @@ function togglePiece(piece) {
         nbToggle++;
     }
     updateSelected();
-    
 }
 
 /**
@@ -1207,25 +1238,21 @@ function updateSelected() {
 function downloadSVG(sn) {
     // Generate piece.
     var piece = computePiece(sn, {
-        cropped: $("#cropped").prop('checked'), 
         trapezoidal:$("#trapezoidal").prop('checked')
     });
     
     // Output to SVG.
     var svg = drawSVG(piece, $("#tmpSvg svg")[0]);
     svg.attr('viewBox', 
-        piece.bbox.x 
+                piece.bbox.x 
         + " " + piece.bbox.y 
-        + " " 
-        + (piece.bbox.x2-piece.bbox.x) 
-        + " " 
-        + (piece.bbox.y2-piece.bbox.y)
+        + " " + (piece.bbox.x2-piece.bbox.x) 
+        + " " + (piece.bbox.y2-piece.bbox.y)
     );
     svg.attr({fill: 'none', stroke: 'black', strokeWidth: 0.1});
 
     blob = new Blob([svg.outerSVG()], {type: "image/svg+xml"});
     saveAs(blob, sn + ".svg");
-    
 } 
 
 /**
@@ -1257,7 +1284,6 @@ function downloadPDF() {
     $("#progressDialog").modal('show');
     piecesToPDF(
         {
-            cropped: $("#cropped").prop('checked'),
             trapezoidal: $("#trapezoidal").prop('checked')
         },
         {
@@ -1301,7 +1327,6 @@ function downloadZip() {
     $("#progressDialog").modal('show');
     piecesToZip(
         {
-            cropped: $("#cropped").prop('checked'),
             trapezoidal: $("#trapezoidal").prop('checked')
         },
         {
