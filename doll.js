@@ -9,6 +9,13 @@
 /** Unit conversions. */
 var unitPt = {mm: 72/25.4, cm: 72/2.54, in: 72, pt: 1}; // Conversion from point to unit. 1in = 72pt = 25.4mm
 
+/** SVG attributes for default & bounding box. */
+var svgAttr     = {fill: 'none', stroke: 'black', strokeWidth: 0.1},
+    svgBBoxAttr = {stroke: 'none'};
+
+/** PDF draw bounding box flag. */
+var pdfDrawBBox = false;
+
 /** Maximum seed value. */
 var MAX_SEED = 999999;
 
@@ -40,6 +47,9 @@ var shoulderHip = 53.5;
 
 /** Hip-calve distance = 14 1/16". */
 var hipCalve = 56.25;
+
+/** Bounding box inner margin. */
+var bboxMargin = 4;
 
 /** Ten primes used to seed the linear congruential generator. */
 var primes = [53, 59, 61, 67, 71, 73, 79, 83, 89, 97];
@@ -208,7 +218,7 @@ function interpolate(p1, p2, d) {
  *  @return The piece object.
  */
 function computePiece(sn, options) {
-    if (sn.length != 4 && sn.length != 7) return;
+    if (sn.length != 7) return;
 
     //
     // 1. Iterate over slots and build shim coordinates.
@@ -287,6 +297,7 @@ function computePiece(sn, options) {
             }
         }
     }
+    
     
     //
     // 2. Shift slots to junction points.
@@ -369,6 +380,7 @@ function computePiece(sn, options) {
         }
     }
     
+    
     //
     // 3. Compute bounding box.
     //
@@ -388,6 +400,11 @@ function computePiece(sn, options) {
         }
     }
     
+    // Inner margin.
+    x  -= bboxMargin; y  -= bboxMargin;
+    x2 += bboxMargin; y2 += bboxMargin;
+    
+    
     //
     // 4. Ensure that all coords are positive. Other code portions depend on it
     //    (e.g. HTML SVG objects & PDF layout).
@@ -399,11 +416,13 @@ function computePiece(sn, options) {
             var shim = slot.shims[iShim];
             for (i = 0; i < shim.length; i++) {
                 shim[i].x -= x;
+                shim[i].y -= y;
             }
         }
     }
-    x2 -= x;
-    x = 0;
+    x2 -= x; x = 0;
+    y2 -= y; y = 0;
+    
     
     //
     // Done!
@@ -423,6 +442,7 @@ function computePiece(sn, options) {
 function drawSVG(piece, element) {
     var svg = Snap(element);
     svg.clear();
+    svg.attr(svgAttr);
     for (var iSlot = 0; iSlot < piece.slots.length; iSlot++) {
         var slot = piece.slots[iSlot];
         for (var iShim = 0; iShim < slot.shims.length; iShim++) {
@@ -431,14 +451,14 @@ function drawSVG(piece, element) {
             for (var i = 0; i < shim.length; i++) {
                 coords.push(shim[i].x, shim[i].y);
             }
-            svg.polygon(coords).attr('class', "shim");
+            svg.polygon(coords);
         }
     }
     svg.rect(
         piece.bbox.x, piece.bbox.y,
         piece.bbox.x2-piece.bbox.x,
         piece.bbox.y2-piece.bbox.y
-    ).attr('class', "bbox");
+    ).attr(svgBBoxAttr);
     return svg;
 }
 
@@ -474,11 +494,13 @@ function drawPDF(piece, pdf, scale, offX, offY) {
             
         }
     }
-    pdf.rect(
-        piece.bbox.x*scale+offX, piece.bbox.y*scale+offY, 
-        (piece.bbox.x2-piece.bbox.x)*scale, (piece.bbox.y2-piece.bbox.y)*scale, 
-        'D'
-    );
+    if (pdfDrawBBox) {
+        pdf.rect(
+            piece.bbox.x*scale+offX, piece.bbox.y*scale+offY, 
+            (piece.bbox.x2-piece.bbox.x)*scale, (piece.bbox.y2-piece.bbox.y)*scale, 
+            'D'
+        );
+    }
 }
 
 /**
@@ -835,7 +857,6 @@ function piecesToZip(pieceOptions, limits, onprogress, onfinish) {
             + " " + (piece.bbox.x2-piece.bbox.x) 
             + " " + (piece.bbox.y2-piece.bbox.y)
         );
-        svg.attr({fill: 'none', stroke: 'black', strokeWidth: 0.1});
         
         // Add SVG to Zip file.
         zip.file(sn + ".svg", svg.outerSVG());
@@ -986,8 +1007,8 @@ function generatePieces() {
     }
     
     // Maximum theoretical piece width/height.
-    maxWidth = x*7;//FIXME better formula?
-    maxHeight = headShoulder+shoulderHip+hipCalve+side;
+    maxWidth = x*7 + 2*bboxMargin;//FIXME better formula?
+    maxHeight = headShoulder+shoulderHip+hipCalve+side + 2*bboxMargin;
 
     // Get/generate seed.
     if ($("#random").prop('checked')) {
@@ -1249,7 +1270,6 @@ function downloadSVG(sn) {
         + " " + (piece.bbox.x2-piece.bbox.x) 
         + " " + (piece.bbox.y2-piece.bbox.y)
     );
-    svg.attr({fill: 'none', stroke: 'black', strokeWidth: 0.1});
 
     blob = new Blob([svg.outerSVG()], {type: "image/svg+xml"});
     saveAs(blob, sn + ".svg");
