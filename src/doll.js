@@ -968,7 +968,9 @@ function validateNumber() {
 }
 
 /**
- * Ensure that permutation is not too large. Else disable interface elements.
+ * Ensure that permutation is not too large. Else disable interface elements. 
+ * Also keep the nb piece input consistent with X/Y handles when max checkbox 
+ * is on.
  */ 
 function validatePermutationSize() {
     var x = parseInt($("#x").val());
@@ -985,6 +987,18 @@ function validatePermutationSize() {
         $("#x, #symmetric").parent().removeClass("has-error bg-danger");
         $("#message").removeClass("panel-body").empty();
     }
+	
+	// Handle nb pieces input and max checkbox.
+	if ($("#max").prop('checked')) {
+		if (!$("#nbPieces").prop('disabled')) {
+			$("#oldNbPieces").val($("#nbPieces").val());
+		}
+		$("#nbPieces").prop('disabled', true).val(nbPieces);
+	} else {
+		if ($("#nbPieces").prop('disabled')) {
+			$("#nbPieces").prop('disabled', false).val($("#oldNbPieces").val());
+		}
+	}
 }
 
 /**
